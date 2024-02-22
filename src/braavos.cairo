@@ -1,7 +1,7 @@
 %lang starknet
 
 from starkware.cairo.common.cairo_builtins import HashBuiltin
-from starkware.starknet.common.syscalls import get_caller_address
+from starkware.starknet.common.syscalls import call_contract, get_caller_address, replace_class
 from starkware.cairo.common.uint256 import Uint256, uint256_unsigned_div_rem
 from starkware.cairo.common.math import assert_le_felt, split_felt
 from cairo_contracts.src.openzeppelin.upgrades.library import Proxy
@@ -67,6 +67,16 @@ func upgrade{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr}(
 }
 
 
+@external
+func upgrade_regenesis{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr}(
+    new_implementation: felt
+) {
+    // Set Cairo 2 contract implementation
+    _check_admin();
+    replace_class(new_implementation);
+    return ();
+}
+
 //
 // Admin functions
 //
@@ -124,9 +134,7 @@ func claim_name_for{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_
     // Check if receiver is a braavos wallet
     with_attr error_message(
             "The wallet is not a Braavos wallet, change your wallet to a Braavos wallet.") {
-        let (address_class_hash) = IProxyWallet.get_implementation(address);
-        let (is_class_hash_wl) = _is_class_hash_wl.read(address_class_hash);
-        assert 1 = is_class_hash_wl;
+        _check_braavos(address);
     }
 
     // Check if name is not taken
@@ -170,9 +178,7 @@ func claim_name{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr}
     let (caller) = get_caller_address();
     with_attr error_message(
             "Your wallet is not a Braavos wallet, change your wallet to a Braavos wallet.") {
-        let (caller_class_hash) = IProxyWallet.get_implementation(caller);
-        let (is_class_hash_wl) = _is_class_hash_wl.read(caller_class_hash);
-        assert 1 = is_class_hash_wl;
+        _check_braavos(caller);
     }
 
     // Check if name is not taken
@@ -216,12 +222,8 @@ func transfer_name{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_p
     // Check if new owner is a braavos wallet
     with_attr error_message(
             "The receiver wallet is not a Braavos wallet, change it to a Braavos wallet.") {
-        let (new_owner_class_hash) = IProxyWallet.get_implementation(new_owner);
-        let (is_class_hash_wl) = _is_class_hash_wl.read(new_owner_class_hash);
-
-        assert 1 = is_class_hash_wl;
+        _check_braavos(new_owner);
     }
-
     // Change address in storage
     domain_to_addr_update.emit(1, new (name), new_owner);
     _name_owners.write(name, new_owner);
@@ -265,6 +267,22 @@ func is_class_hash_wl{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_chec
 //
 // Utils
 //
+
+const GET_SIGNERS_SELECTOR = 0x2b8faca80de28f81027b46c4f3cb534c44616e721ae9f1e96539c6b54a1d932;
+
+func _check_braavos{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr} (
+    address: felt,
+) -> () {
+    tempvar _empty_calldata = new ();
+    call_contract(
+        contract_address=address,
+        function_selector=GET_SIGNERS_SELECTOR,
+        calldata_size=0,
+        calldata=_empty_calldata,
+    );
+
+    return ();
+}
 
 func _check_admin{syscall_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr}() -> () {
     let (caller) = get_caller_address();
